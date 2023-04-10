@@ -1,0 +1,139 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: "Deploys a single PostgreSQL RDS instance and S3 bucket."
+Parameters:
+  AppName:
+    Type: String
+    Default: "aws-permits-pipeline"
+  DBInstanceIdentifier:
+    Type: String
+    Default: "db"
+  DBEngine:
+    Type: String
+    Default: "postgres"
+  DBEngineVersion:
+    Type: String
+    Default: "11.6"
+  DBInstanceClass:
+    Type: String
+    Default: "db.t2.micro"
+  DBStorageType:
+    Type: String
+    Default: "gp2"
+  DBAllocatedStorage:
+    Type: Number
+    Default: 20
+  DBName:
+    Type: String
+    Default: '{{resolve:ssm:/permits/db_name:1}}'
+  DBUser:
+    Type: String
+    Default: '{{resolve:ssm:/permits/db_user:1}}'
+  DBPassword:
+    Type: String
+    Default: '{{resolve:ssm-secure:/permits/db_password:1}}'
+    NoEcho: True
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+Resources:
+  RDSS3ImportPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Join
+        - '-'
+        - - !Ref Stage
+          - !Ref AppName
+          - rds-s3-import-policy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement: 
+          - Sid: s3import
+            Action: 
+              - s3:GetObject
+              - s3:ListBucket
+            Effect: Allow
+            Resource: 
+              - !Join 
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Ref DataBucket
+              - !Join 
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Ref DataBucket
+                  - '/*'
+      Roles: 
+        - !Ref RDSS3ImportRole
+  RDSS3ImportRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join
+        - '-'
+        - - !Ref Stage
+          - !Ref AppName
+          - rds-s3-import-role
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: 
+              Service:
+                - rds.amazonaws.com
+            Action: sts:AssumeRole
+  RDSMasterInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Join 
+        - '-'
+        - - !Ref Stage
+          - !Ref AppName
+          - !Ref DBInstanceIdentifier
+      DBName: !Ref DBName
+      AssociatedRoles: 
+        - FeatureName: s3Import
+          RoleArn: !GetAtt RDSS3ImportRole.Arn
+      AllocatedStorage: !Ref DBAllocatedStorage
+      DBInstanceClass: !Ref DBInstanceClass
+      StorageType: !Ref DBStorageType
+      Engine: !Ref DBEngine
+      EngineVersion: !Ref DBEngineVersion
+      MasterUsername: !Ref DBUser
+      MasterUserPassword: !Ref DBPassword
+      PubliclyAccessible: true
+      Tags:
+        - Key: App
+          Value: !Ref AppName
+        - Key: Name
+          Value: Postgres Master DB
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Join 
+        - '-'
+        - - !Ref Stage
+          - !Ref AppName
+          - 'data'
+          - !Ref AWS::Region
+          - !Ref AWS::AccountId
+Outputs:
+  MasterEndpointDB:
+    Description: "Endpoint of the newly created Building Permits RDS master instance"
+    Value: !GetAtt RDSMasterInstance.Endpoint.Address
+  MasterPortDB:
+    Description: "Port of the newly created Building Permits RDS master instance"
+    Value: !GetAtt RDSMasterInstance.Endpoint.Port
+  ReplicaEndpointDB:
+    Description: "Endpoint of the newly created Building Permits RDS read replica instance"
+    Value: "No replica available"
+  ReplicaPortDB:
+    Description: "Port of the newly created Building Permits RDS read replica instance"
+    Value: "No replica available"
+  DataBucket:
+    Description: "S3 Bucket for storing Building Permits data"
+    Value: !Ref DataBucket
+  AppName:
+    Description: "App name"
+    Value: !Ref AppName 
